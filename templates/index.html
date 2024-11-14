@@ -5,14 +5,129 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <style>
-        .hidden { display: none; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #000;
+            color: white;
+        }
+
+        .hidden { 
+            display: none !important; 
+        }
+
+        #setup, #caller {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #222;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        input {
+            padding: 10px;
+            margin: 10px 0;
+            width: 200px;
+            border-radius: 5px;
+            border: none;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #075e54;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #128c7e;
+        }
+
+        #videos {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+        }
+
+        #remoteVideo {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #localVideo {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 120px;
+            height: 160px;
+            object-fit: cover;
+            border-radius: 10px;
+            border: 2px solid white;
+            cursor: move;
+        }
+
+        #callControls {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px 30px;
+            border-radius: 50px;
+        }
+
+        .control-button {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+
+        .end-call {
+            background: #ff0000;
+        }
+
         #callNotification {
             position: fixed;
             top: 20px;
             right: 20px;
             padding: 20px;
-            background: #f0f0f0;
-            border: 1px solid #ccc;
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 10px;
+            color: white;
+            z-index: 1000;
+        }
+
+        #callNotification button {
+            margin: 5px;
+        }
+
+        .accept-call {
+            background: #25d366;
+        }
+
+        .reject-call {
+            background: #ff0000;
         }
     </style>
 </head>
@@ -29,19 +144,75 @@
     </div>
 
     <div id="videos" class="hidden">
-        <video id="localVideo" autoplay playsinline></video>
         <video id="remoteVideo" autoplay playsinline></video>
-        <button onclick="endCall()">Akhiri Panggilan</button>
+        <video id="localVideo" autoplay playsinline></video>
+        <div id="callControls">
+            <div class="control-button" onclick="toggleMute()">
+                <span id="muteIcon">🎤</span>
+            </div>
+            <div class="control-button" onclick="toggleVideo()">
+                <span id="videoIcon">📹</span>
+            </div>
+            <div class="control-button end-call" onclick="endCall()">
+                <span>📞</span>
+            </div>
+        </div>
     </div>
 
     <div id="callNotification" class="hidden">
         <p>Panggilan masuk dari: <span id="callerId"></span></p>
-        <button onclick="acceptCall()">Terima</button>
-        <button onclick="rejectCall()">Tolak</button>
+        <button class="accept-call" onclick="acceptCall()">Terima</button>
+        <button class="reject-call" onclick="rejectCall()">Tolak</button>
     </div>
     
     <script>
         const iceServers = {{ ice_servers|tojson|safe }};
+
+        // Drag and drop untuk local video
+        const localVideo = document.getElementById('localVideo');
+        let isDragging = false;
+        let currentX;
+        let currentY;
+        let initialX;
+        let initialY;
+        let xOffset = 0;
+        let yOffset = 0;
+
+        localVideo.addEventListener("mousedown", dragStart);
+        document.addEventListener("mousemove", drag);
+        document.addEventListener("mouseup", dragEnd);
+
+        function dragStart(e) {
+            initialX = e.clientX - xOffset;
+            initialY = e.clientY - yOffset;
+
+            if (e.target === localVideo) {
+                isDragging = true;
+            }
+        }
+
+        function drag(e) {
+            if (isDragging) {
+                e.preventDefault();
+                currentX = e.clientX - initialX;
+                currentY = e.clientY - initialY;
+
+                xOffset = currentX;
+                yOffset = currentY;
+
+                setTranslate(currentX, currentY, localVideo);
+            }
+        }
+
+        function setTranslate(xPos, yPos, el) {
+            el.style.transform = `translate3d(${xPos}px, ${yPos}px, 0)`;
+        }
+
+        function dragEnd(e) {
+            initialX = currentX;
+            initialY = currentY;
+            isDragging = false;
+        }
     </script>
 </body>
 </html> 

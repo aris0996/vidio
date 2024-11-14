@@ -7,6 +7,10 @@ let currentCall = {
     isInitiator: false
 };
 
+// Tambahkan variabel untuk track status
+let isAudioMuted = false;
+let isVideoMuted = false;
+
 // Logging function
 function log(type, message) {
     const timestamp = new Date().toISOString();
@@ -207,11 +211,48 @@ mqtt_client.on('message', async (topic, message) => {
             alert('Panggilan ditolak');
             resetCall();
             break;
+
+        case 'call_ended':
+            log('CALL', `Call ended by peer: ${msg.from}`);
+            endCall();
+            break;
     }
 });
 
+// Fungsi untuk toggle mute audio
+function toggleMute() {
+    log('MEDIA', `Toggling audio: ${isAudioMuted ? 'unmute' : 'mute'}`);
+    if (localStream) {
+        localStream.getAudioTracks().forEach(track => {
+            track.enabled = isAudioMuted;
+        });
+        isAudioMuted = !isAudioMuted;
+        document.getElementById('muteIcon').textContent = isAudioMuted ? '🔇' : '🎤';
+    }
+}
+
+// Fungsi untuk toggle video
+function toggleVideo() {
+    log('MEDIA', `Toggling video: ${isVideoMuted ? 'show' : 'hide'}`);
+    if (localStream) {
+        localStream.getVideoTracks().forEach(track => {
+            track.enabled = isVideoMuted;
+        });
+        isVideoMuted = !isVideoMuted;
+        document.getElementById('videoIcon').textContent = isVideoMuted ? '🚫' : '📹';
+    }
+}
+
+// Update fungsi endCall untuk mengirim notifikasi ke peer lain
 function endCall() {
     log('CALL', 'Ending call');
+    if (currentCall.destinationId) {
+        mqtt_client.publish(`vchat/${currentCall.destinationId}`, JSON.stringify({
+            type: 'call_ended',
+            from: myId
+        }));
+    }
+    
     if (localStream) {
         localStream.getTracks().forEach(track => {
             log('MEDIA', `Stopping track: ${track.kind}`);
