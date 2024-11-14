@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>Video Call</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <style>
@@ -9,12 +10,15 @@
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
         }
 
         body {
-            font-family: Arial, sans-serif;
-            background: #000;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #111;
             color: white;
+            height: 100vh;
+            overflow: hidden;
         }
 
         .hidden { 
@@ -26,31 +30,54 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: #222;
-            padding: 20px;
-            border-radius: 10px;
+            background: rgba(34, 34, 34, 0.95);
+            padding: 25px;
+            border-radius: 20px;
             text-align: center;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            width: 90%;
+            max-width: 350px;
         }
 
         input {
-            padding: 10px;
-            margin: 10px 0;
-            width: 200px;
-            border-radius: 5px;
-            border: none;
+            width: 100%;
+            padding: 15px;
+            margin: 12px 0;
+            border-radius: 12px;
+            border: 1px solid #444;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #075e54;
+            background: rgba(255, 255, 255, 0.15);
         }
 
         button {
-            padding: 10px 20px;
+            width: 100%;
+            padding: 15px;
             background: #075e54;
             color: white;
             border: none;
-            border-radius: 5px;
+            border-radius: 12px;
             cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            transition: all 0.3s ease;
         }
 
         button:hover {
             background: #128c7e;
+            transform: translateY(-2px);
+        }
+
+        button:active {
+            transform: translateY(0);
         }
 
         #videos {
@@ -72,35 +99,51 @@
             position: absolute;
             top: 20px;
             right: 20px;
-            width: 120px;
-            height: 160px;
+            width: 100px;
+            height: 150px;
+            border-radius: 12px;
             object-fit: cover;
-            border-radius: 10px;
-            border: 2px solid white;
-            cursor: move;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+            z-index: 2;
         }
 
         #callControls {
             position: absolute;
-            bottom: 30px;
+            bottom: 40px;
             left: 50%;
             transform: translateX(-50%);
             display: flex;
             gap: 20px;
-            background: rgba(0, 0, 0, 0.5);
-            padding: 15px 30px;
-            border-radius: 50px;
+            padding: 20px;
+            border-radius: 20px;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(10px);
+            z-index: 3;
         }
 
         .control-button {
-            width: 50px;
-            height: 50px;
+            width: 60px;
+            height: 60px;
             border-radius: 50%;
-            background: #333;
+            background: rgba(255, 255, 255, 0.2);
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .control-button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .control-button:active {
+            transform: scale(0.95);
+        }
+
+        .control-button span {
+            font-size: 24px;
         }
 
         .end-call {
