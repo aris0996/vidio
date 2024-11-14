@@ -118,60 +118,42 @@ async function initiateCall() {
         return alert('Masukkan ID Tujuan');
     }
 
-    // Tambahkan pengecekan self-calling
-    if (destinationId === myId) {
-        logDetail('CALL', 'Self-calling detected', { myId });
-        try {
-            // Minta akses media terlebih dahulu
-            localStream = await navigator.mediaDevices.getUserMedia({
-                video: {
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 },
-                    facingMode: 'user'
-                },
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true
-                }
-            });
+    try {
+        // Dapatkan media stream terlebih dahulu
+        localStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: 'user'
+            },
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true
+            }
+        });
 
-            // Tampilkan video lokal di kedua element
-            const localVideo = document.getElementById('localVideo');
-            const remoteVideo = document.getElementById('remoteVideo');
-            
-            localVideo.srcObject = localStream;
-            remoteVideo.srcObject = localStream;
+        // Tampilkan video lokal
+        const localVideo = document.getElementById('localVideo');
+        localVideo.srcObject = localStream;
+        localVideo.play().catch(e => logDetail('ERROR', 'Local video play failed', e));
 
-            // Tampilkan container video
-            document.getElementById('caller').classList.add('hidden');
-            document.getElementById('videos').classList.remove('hidden');
+        // Set current call details
+        currentCall.destinationId = destinationId;
+        currentCall.isInitiator = true;
 
-            logDetail('MEDIA', 'Self-call media setup complete', {
-                tracks: localStream.getTracks().map(t => ({
-                    kind: t.kind,
-                    enabled: t.enabled
-                }))
-            });
+        // Kirim permintaan panggilan
+        mqtt_client.publish(`vchat/${destinationId}`, JSON.stringify({
+            type: 'call_request',
+            from: myId
+        }));
 
-        } catch (err) {
-            logDetail('ERROR', 'Self-call media access failed', { error: err });
-            handleMediaError(err);
-        }
-        return;
+        document.getElementById('caller').classList.add('hidden');
+        document.getElementById('videos').classList.remove('hidden');
+
+    } catch (err) {
+        logDetail('ERROR', 'Media access failed', { error: err });
+        handleMediaError(err);
     }
-
-    // Lanjutkan dengan normal call flow untuk non-self calls
-    logDetail('CALL', 'Initiating call', {
-        destinationId: destinationId,
-        isInitiator: true
-    });
-    currentCall.destinationId = destinationId;
-    currentCall.isInitiator = true;
-
-    mqtt_client.publish(`vchat/${destinationId}`, JSON.stringify({
-        type: 'call_request',
-        from: myId
-    }));
 }
 
 // Terima panggilan
@@ -186,6 +168,7 @@ async function acceptCall() {
     document.getElementById('videos').classList.remove('hidden');
 
     try {
+        // Dapatkan media stream
         localStream = await navigator.mediaDevices.getUserMedia({
             video: {
                 width: { ideal: 1280 },
@@ -198,9 +181,12 @@ async function acceptCall() {
             }
         });
 
-        document.getElementById('localVideo').srcObject = localStream;
+        // Tampilkan video lokal
+        const localVideo = document.getElementById('localVideo');
+        localVideo.srcObject = localStream;
+        localVideo.play().catch(e => logDetail('ERROR', 'Local video play failed', e));
 
-        // Buat peer connection sebelum mengirim acceptance
+        // Buat peer connection
         createPeerConnection();
 
         // Kirim acceptance
@@ -218,19 +204,56 @@ async function acceptCall() {
 function createPeerConnection() {
     logDetail('WEBRTC', 'Creating peer connection');
     
-    peerConnection = new RTCPeerConnection({ iceServers });
+    const configuration = {
+        iceServers,
+        iceTransportPolicy: 'all',
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
+        // Tambahkan konfigurasi ICE
+        iceServers: [
+            ...iceServers,
+            {
+                urls: [
+                    'turn:openrelay.metered.ca:80',
+                    'turn:openrelay.metered.ca:443',
+                    'turn:openrelay.metered.ca:443?transport=tcp'
+                ],
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            }
+        ]
+    };
+    
+    peerConnection = new RTCPeerConnection(configuration);
 
-    // Tambahkan semua track dari localStream ke peerConnection
+    // Tambahkan connection monitoring
+    peerConnection.oniceconnectionstatechange = () => {
+        logDetail('ICE', 'Connection state changed', {
+            state: peerConnection.iceConnectionState
+        });
+        
+        if (peerConnection.iceConnectionState === 'failed') {
+            // Coba reconnect dengan TURN
+            restartIceWithTurn();
+        }
+    };
+
+    // Tambahkan track handler
     if (localStream) {
         localStream.getTracks().forEach(track => {
             peerConnection.addTrack(track, localStream);
+            logDetail('MEDIA', `Added local track: ${track.kind}`);
         });
     }
 
+    // Perbaikan handler ontrack
     peerConnection.ontrack = event => {
-        logDetail('MEDIA', 'Received remote track');
+        logDetail('MEDIA', 'Received remote track', {
+            kind: event.track.kind
+        });
+        
         const remoteVideo = document.getElementById('remoteVideo');
-        if (remoteVideo.srcObject !== event.streams[0]) {
+        if (event.streams && event.streams[0]) {
             remoteVideo.srcObject = event.streams[0];
             logDetail('MEDIA', 'Remote video stream connected');
         }
@@ -255,19 +278,35 @@ function createPeerConnection() {
         });
     };
 
-    peerConnection.oniceconnectionstatechange = () => {
-        logDetail('ICE', 'ICE connection state changed', {
-            state: peerConnection.iceConnectionState
-        });
-        
-        // Reconnect if connection fails
-        if (peerConnection.iceConnectionState === 'failed') {
-            logDetail('WEBRTC', 'Connection failed - attempting reconnect');
-            peerConnection.restartIce();
-        }
-    };
-
     return peerConnection;
+}
+
+// Tambahkan fungsi untuk restart ICE dengan TURN
+async function restartIceWithTurn() {
+    logDetail('WEBRTC', 'Attempting to restart ICE with TURN');
+    
+    if (peerConnection && currentCall.isInitiator) {
+        try {
+            const offerOptions = {
+                iceRestart: true,
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: true
+            };
+            
+            const offer = await peerConnection.createOffer(offerOptions);
+            await peerConnection.setLocalDescription(offer);
+            
+            mqtt_client.publish(`vchat/${currentCall.destinationId}`, JSON.stringify({
+                type: 'offer',
+                sdp: offer,
+                from: myId,
+                isRestart: true
+            }));
+            
+        } catch (err) {
+            logDetail('ERROR', 'Failed to restart ICE', { error: err });
+        }
+    }
 }
 
 // Fungsi untuk restart ICE jika koneksi gagal
