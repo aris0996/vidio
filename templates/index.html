@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Video Call</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <style>
+        .hidden { display: none; }
+        #callNotification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 20px;
+            background: #f0f0f0;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <div id="setup">
+        <input type="text" id="myId" placeholder="Masukkan ID Anda">
+        <button onclick="setupConnection()">Set ID Saya</button>
+    </div>
+
+    <div id="caller" class="hidden">
+        <h3>ID Saya: <span id="myIdDisplay"></span></h3>
+        <input type="text" id="destinationId" placeholder="Masukkan ID Tujuan">
+        <button onclick="initiateCall()">Hubungi</button>
+    </div>
+
+    <div id="videos" class="hidden">
+        <video id="localVideo" autoplay playsinline></video>
+        <video id="remoteVideo" autoplay playsinline></video>
+        <button onclick="endCall()">Akhiri Panggilan</button>
+    </div>
+
+    <div id="callNotification" class="hidden">
+        <p>Panggilan masuk dari: <span id="callerId"></span></p>
+        <button onclick="acceptCall()">Terima</button>
+        <button onclick="rejectCall()">Tolak</button>
+    </div>
+    
+    <script>
+        const iceServers = {{ ice_servers|tojson|safe }};
+    </script>
+</body>
+</html> 
