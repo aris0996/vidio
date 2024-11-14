@@ -362,10 +362,11 @@ async function restartIce() {
 mqtt_client.on('message', async (topic, message) => {
     try {
         const msg = JSON.parse(message.toString());
-        logDetail('MQTT', 'Received message', { type: msg.type, from: msg.from });
+        logDetail('MQTT', 'Received message', { type: msg.type, from: msg.from, topic });
 
         switch(msg.type) {
             case 'call_request':
+                logDetail('CALL', 'Incoming call', { destinationId: msg.from });
                 // Tampilkan notifikasi panggilan masuk
                 currentCall.destinationId = msg.from;
                 document.getElementById('callerId').textContent = msg.from;
@@ -374,15 +375,18 @@ mqtt_client.on('message', async (topic, message) => {
 
             case 'call_accepted':
                 if (currentCall.isInitiator) {
-                    // Mulai proses signaling
+                    logDetail('CALL', 'Call accepted, starting WebRTC');
+                    // Mulai WebRTC connection
+                    await createPeerConnection();
                     await handleSignaling(msg.from);
                 }
                 break;
 
             case 'offer':
                 try {
+                    logDetail('WEBRTC', 'Received offer');
                     if (!peerConnection) {
-                        createPeerConnection();
+                        await createPeerConnection();
                     }
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
                     const answer = await peerConnection.createAnswer();
@@ -393,39 +397,13 @@ mqtt_client.on('message', async (topic, message) => {
                         sdp: answer,
                         from: myId
                     }));
-                    logDetail('WEBRTC', 'Answer sent');
                 } catch (err) {
-                    logDetail('ERROR', 'Error in offer handling', { error: err });
+                    logDetail('ERROR', 'Failed to handle offer', { error: err });
                 }
-                break;
-
-            case 'answer':
-                logDetail('WEBRTC', 'Received answer');
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-                break;
-
-            case 'candidate':
-                if (peerConnection) {
-                    logDetail('ICE', 'Adding ICE candidate');
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
-                }
-                break;
-
-            case 'call_rejected':
-                logDetail('CALL', 'Call rejected');
-                alert('Panggilan ditolak');
-                resetCall();
-                break;
-
-            case 'call_ended':
-                logDetail('CALL', 'Call ended', {
-                    from: msg.from
-                });
-                endCall();
                 break;
         }
     } catch (err) {
-        logDetail('ERROR', 'Error in message handling', { error: err });
+        logDetail('ERROR', 'Failed to process message', { error: err });
     }
 });
 
@@ -521,5 +499,27 @@ function handleMediaError(error) {
     }
     
     alert(errorMessage);
+    endCall();
+}
+
+function handleError(error, context) {
+    logDetail('ERROR', `Error in ${context}`, { error });
+    
+    let message = 'Terjadi kesalahan: ';
+    switch(context) {
+        case 'media':
+            message += 'Tidak dapat mengakses kamera/mikrofon';
+            break;
+        case 'connection':
+            message += 'Koneksi terputus';
+            break;
+        case 'signaling':
+            message += 'Gagal menghubungkan dengan peer';
+            break;
+        default:
+            message += error.message;
+    }
+    
+    alert(message);
     endCall();
 }
