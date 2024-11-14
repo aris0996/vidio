@@ -228,14 +228,38 @@ function createPeerConnection() {
     logDetail('WEBRTC', 'Creating peer connection', {
         iceServers: iceServers
     });
+    
     peerConnection = new RTCPeerConnection({ iceServers });
 
-    // Handle ICE candidates
+    // Handle incoming streams
+    peerConnection.ontrack = event => {
+        logDetail('MEDIA', 'Received remote track', {
+            kind: event.track.kind,
+            id: event.track.id
+        });
+        
+        const remoteVideo = document.getElementById('remoteVideo');
+        if (remoteVideo.srcObject !== event.streams[0]) {
+            remoteVideo.srcObject = event.streams[0];
+            logDetail('MEDIA', 'Remote video stream connected');
+        }
+    };
+
+    // Add local tracks to peer connection
+    if (localStream) {
+        localStream.getTracks().forEach(track => {
+            logDetail('MEDIA', 'Adding local track to peer connection', {
+                kind: track.kind,
+                id: track.id
+            });
+            peerConnection.addTrack(track, localStream);
+        });
+    }
+
+    // ICE candidate handling
     peerConnection.onicecandidate = event => {
         if (event.candidate) {
-            logDetail('ICE', 'New ICE candidate', {
-                candidate: event.candidate
-            });
+            logDetail('ICE', 'New ICE candidate', { candidate: event.candidate });
             mqtt_client.publish(`vchat/${currentCall.destinationId}`, JSON.stringify({
                 type: 'candidate',
                 candidate: event.candidate,
@@ -244,42 +268,22 @@ function createPeerConnection() {
         }
     };
 
-    // Improved track handling
-    peerConnection.ontrack = event => {
-        logDetail('MEDIA', 'Received remote track', {
-            kind: event.track.kind,
-            id: event.track.id
-        });
-        
-        const remoteStream = event.streams[0];
-        const remoteVideo = document.getElementById('remoteVideo');
-        
-        if (remoteVideo.srcObject !== remoteStream) {
-            remoteVideo.srcObject = remoteStream;
-            logDetail('MEDIA', 'Remote video stream connected');
-        }
-    };
-
-    // Add local tracks to peer connection
-    if (localStream) {
-        localStream.getTracks().forEach(track => {
-            logDetail('MEDIA', 'Adding local track', {
-                kind: track.kind,
-                id: track.id
-            });
-            peerConnection.addTrack(track, localStream);
-        });
-    }
-
     // Connection state monitoring
     peerConnection.onconnectionstatechange = () => {
         logDetail('WEBRTC', 'Connection state changed', {
             state: peerConnection.connectionState
         });
+    };
+
+    peerConnection.oniceconnectionstatechange = () => {
+        logDetail('ICE', 'ICE connection state changed', {
+            state: peerConnection.iceConnectionState
+        });
         
-        if (peerConnection.connectionState === 'failed') {
-            logDetail('ERROR', 'Connection failed - attempting reconnect');
-            restartIce();
+        // Reconnect if connection fails
+        if (peerConnection.iceConnectionState === 'failed') {
+            logDetail('WEBRTC', 'Connection failed - attempting reconnect');
+            peerConnection.restartIce();
         }
     };
 
