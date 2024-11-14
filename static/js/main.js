@@ -110,16 +110,44 @@ function setupConnection() {
     document.getElementById('myIdDisplay').textContent = myId;
 }
 
-// Inisiasi panggilan
+// Tambahkan fungsi untuk menangani signaling
+async function handleSignaling(destinationId) {
+    try {
+        // Buat peer connection terlebih dahulu
+        createPeerConnection();
+        
+        if (currentCall.isInitiator) {
+            // Buat dan kirim offer
+            const offer = await peerConnection.createOffer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: true
+            });
+            
+            await peerConnection.setLocalDescription(offer);
+            
+            // Kirim offer ke peer tujuan
+            mqtt_client.publish(`vchat/${destinationId}`, JSON.stringify({
+                type: 'offer',
+                sdp: offer,
+                from: myId
+            }));
+            
+            logDetail('WEBRTC', 'Offer sent', { destinationId });
+        }
+    } catch (err) {
+        logDetail('ERROR', 'Signaling failed', { error: err });
+    }
+}
+
+// Update fungsi initiateCall
 async function initiateCall() {
     const destinationId = document.getElementById('destinationId').value;
     if (!destinationId) {
-        logDetail('ERROR', 'No destination ID provided');
         return alert('Masukkan ID Tujuan');
     }
 
     try {
-        // Dapatkan media stream terlebih dahulu
+        // Dapatkan media stream
         localStream = await navigator.mediaDevices.getUserMedia({
             video: {
                 width: { ideal: 1280 },
@@ -135,7 +163,7 @@ async function initiateCall() {
         // Tampilkan video lokal
         const localVideo = document.getElementById('localVideo');
         localVideo.srcObject = localStream;
-        localVideo.play().catch(e => logDetail('ERROR', 'Local video play failed', e));
+        await localVideo.play();
 
         // Set current call details
         currentCall.destinationId = destinationId;
@@ -144,7 +172,8 @@ async function initiateCall() {
         // Kirim permintaan panggilan
         mqtt_client.publish(`vchat/${destinationId}`, JSON.stringify({
             type: 'call_request',
-            from: myId
+            from: myId,
+            timestamp: Date.now()
         }));
 
         document.getElementById('caller').classList.add('hidden');
@@ -331,97 +360,72 @@ async function restartIce() {
 
 // MQTT message handler
 mqtt_client.on('message', async (topic, message) => {
-    const msg = JSON.parse(message.toString());
-    logDetail('MQTT', 'Received message', {
-        type: msg.type,
-        from: msg.from || 'unknown',
-        topic: topic,
-        timestamp: Date.now()
-    });
+    try {
+        const msg = JSON.parse(message.toString());
+        logDetail('MQTT', 'Received message', { type: msg.type, from: msg.from });
 
-    switch(msg.type) {
-        case 'call_request':
-            logDetail('CALL', 'Incoming call', {
-                destinationId: msg.from
-            });
-            currentCall.destinationId = msg.from;
-            document.getElementById('callerId').textContent = msg.from;
-            document.getElementById('callNotification').classList.remove('hidden');
-            break;
+        switch(msg.type) {
+            case 'call_request':
+                // Tampilkan notifikasi panggilan masuk
+                currentCall.destinationId = msg.from;
+                document.getElementById('callerId').textContent = msg.from;
+                document.getElementById('callNotification').classList.remove('hidden');
+                break;
 
-        case 'call_accepted':
-            if (currentCall.isInitiator) {
-                logDetail('CALL', 'Call accepted', {
-                    destinationId: currentCall.destinationId
-                });
-                document.getElementById('videos').classList.remove('hidden');
+            case 'call_accepted':
+                if (currentCall.isInitiator) {
+                    // Mulai proses signaling
+                    await handleSignaling(msg.from);
+                }
+                break;
+
+            case 'offer':
                 try {
-                    localStream = await navigator.mediaDevices.getUserMedia({
-                        video: true,
-                        audio: true
-                    });
-                    document.getElementById('localVideo').srcObject = localStream;
+                    if (!peerConnection) {
+                        createPeerConnection();
+                    }
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+                    const answer = await peerConnection.createAnswer();
+                    await peerConnection.setLocalDescription(answer);
                     
-                    createPeerConnection();
-                    const offer = await peerConnection.createOffer();
-                    await peerConnection.setLocalDescription(offer);
-                    logDetail('WEBRTC', 'Local description set', {
-                        sdp: offer
-                    });
-                    
-                    mqtt_client.publish(`vchat/${currentCall.destinationId}`, JSON.stringify({
-                        type: 'offer',
-                        sdp: offer,
+                    mqtt_client.publish(`vchat/${msg.from}`, JSON.stringify({
+                        type: 'answer',
+                        sdp: answer,
                         from: myId
                     }));
+                    logDetail('WEBRTC', 'Answer sent');
                 } catch (err) {
-                    logDetail('ERROR', 'Error in call acceptance', {
-                        error: err
-                    });
+                    logDetail('ERROR', 'Error in offer handling', { error: err });
                 }
-            }
-            break;
+                break;
 
-        case 'offer':
-            logDetail('WEBRTC', 'Received offer', {
-                sdp: msg.sdp
-            });
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            
-            mqtt_client.publish(`vchat/${msg.from}`, JSON.stringify({
-                type: 'answer',
-                sdp: answer,
-                from: myId
-            }));
-            logDetail('WEBRTC', 'Answer sent');
-            break;
+            case 'answer':
+                logDetail('WEBRTC', 'Received answer');
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+                break;
 
-        case 'answer':
-            logDetail('WEBRTC', 'Received answer');
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-            break;
+            case 'candidate':
+                if (peerConnection) {
+                    logDetail('ICE', 'Adding ICE candidate');
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
+                }
+                break;
 
-        case 'candidate':
-            if (peerConnection) {
-                logDetail('ICE', 'Adding ICE candidate');
-                await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
-            }
-            break;
+            case 'call_rejected':
+                logDetail('CALL', 'Call rejected');
+                alert('Panggilan ditolak');
+                resetCall();
+                break;
 
-        case 'call_rejected':
-            logDetail('CALL', 'Call rejected');
-            alert('Panggilan ditolak');
-            resetCall();
-            break;
-
-        case 'call_ended':
-            logDetail('CALL', 'Call ended', {
-                from: msg.from
-            });
-            endCall();
-            break;
+            case 'call_ended':
+                logDetail('CALL', 'Call ended', {
+                    from: msg.from
+                });
+                endCall();
+                break;
+        }
+    } catch (err) {
+        logDetail('ERROR', 'Error in message handling', { error: err });
     }
 });
 
