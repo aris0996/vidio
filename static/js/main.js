@@ -234,64 +234,31 @@ function createPeerConnection() {
     logDetail('WEBRTC', 'Creating peer connection');
     
     const configuration = {
-        iceServers,
-        iceTransportPolicy: 'all',
-        bundlePolicy: 'max-bundle',
-        rtcpMuxPolicy: 'require',
-        // Tambahkan konfigurasi ICE
         iceServers: [
-            ...iceServers,
+            {
+                urls: [
+                    'stun:stun.l.google.com:19302',
+                    'stun:stun1.l.google.com:19302'
+                ]
+            },
             {
                 urls: [
                     'turn:openrelay.metered.ca:80',
-                    'turn:openrelay.metered.ca:443',
-                    'turn:openrelay.metered.ca:443?transport=tcp'
+                    'turn:openrelay.metered.ca:443'
                 ],
                 username: 'openrelayproject',
                 credential: 'openrelayproject'
             }
-        ]
+        ],
+        iceTransportPolicy: 'all',
+        iceCandidatePoolSize: 10
     };
     
     peerConnection = new RTCPeerConnection(configuration);
 
-    // Tambahkan connection monitoring
-    peerConnection.oniceconnectionstatechange = () => {
-        logDetail('ICE', 'Connection state changed', {
-            state: peerConnection.iceConnectionState
-        });
-        
-        if (peerConnection.iceConnectionState === 'failed') {
-            // Coba reconnect dengan TURN
-            restartIceWithTurn();
-        }
-    };
-
-    // Tambahkan track handler
-    if (localStream) {
-        localStream.getTracks().forEach(track => {
-            peerConnection.addTrack(track, localStream);
-            logDetail('MEDIA', `Added local track: ${track.kind}`);
-        });
-    }
-
-    // Perbaikan handler ontrack
-    peerConnection.ontrack = event => {
-        logDetail('MEDIA', 'Received remote track', {
-            kind: event.track.kind
-        });
-        
-        const remoteVideo = document.getElementById('remoteVideo');
-        if (event.streams && event.streams[0]) {
-            remoteVideo.srcObject = event.streams[0];
-            logDetail('MEDIA', 'Remote video stream connected');
-        }
-    };
-
-    // ICE candidate handling
+    // Handle ICE candidates
     peerConnection.onicecandidate = event => {
         if (event.candidate) {
-            logDetail('ICE', 'New ICE candidate', { candidate: event.candidate });
             mqtt_client.publish(`vchat/${currentCall.destinationId}`, JSON.stringify({
                 type: 'candidate',
                 candidate: event.candidate,
@@ -300,29 +267,47 @@ function createPeerConnection() {
         }
     };
 
-    // Connection state monitoring
+    // Handle connection state changes
     peerConnection.onconnectionstatechange = () => {
         logDetail('WEBRTC', 'Connection state changed', {
             state: peerConnection.connectionState
         });
+        
+        if (peerConnection.connectionState === 'failed') {
+            restartConnection();
+        }
     };
 
     return peerConnection;
 }
 
-// Tambahkan fungsi untuk restart ICE dengan TURN
-async function restartIceWithTurn() {
-    logDetail('WEBRTC', 'Attempting to restart ICE with TURN');
+// Tambahkan fungsi untuk restart koneksi
+async function restartConnection() {
+    logDetail('WEBRTC', 'Restarting connection');
     
-    if (peerConnection && currentCall.isInitiator) {
-        try {
-            const offerOptions = {
-                iceRestart: true,
+    try {
+        if (peerConnection) {
+            peerConnection.close();
+        }
+        
+        // Buat koneksi baru
+        createPeerConnection();
+        
+        // Tambahkan track ulang
+        if (localStream) {
+            localStream.getTracks().forEach(track => {
+                peerConnection.addTrack(track, localStream);
+            });
+        }
+        
+        // Kirim ulang offer jika initiator
+        if (currentCall.isInitiator) {
+            const offer = await peerConnection.createOffer({
                 offerToReceiveAudio: true,
-                offerToReceiveVideo: true
-            };
+                offerToReceiveVideo: true,
+                iceRestart: true
+            });
             
-            const offer = await peerConnection.createOffer(offerOptions);
             await peerConnection.setLocalDescription(offer);
             
             mqtt_client.publish(`vchat/${currentCall.destinationId}`, JSON.stringify({
@@ -331,30 +316,9 @@ async function restartIceWithTurn() {
                 from: myId,
                 isRestart: true
             }));
-            
-        } catch (err) {
-            logDetail('ERROR', 'Failed to restart ICE', { error: err });
         }
-    }
-}
-
-// Fungsi untuk restart ICE jika koneksi gagal
-async function restartIce() {
-    if (peerConnection && currentCall.isInitiator) {
-        try {
-            const offer = await peerConnection.createOffer({ iceRestart: true });
-            await peerConnection.setLocalDescription(offer);
-            
-            mqtt_client.publish(`vchat/${currentCall.destinationId}`, JSON.stringify({
-                type: 'offer',
-                sdp: offer,
-                from: myId
-            }));
-            
-            logDetail('WEBRTC', 'ICE restart initiated');
-        } catch (err) {
-            logDetail('ERROR', 'ICE restart failed', { error: err });
-        }
+    } catch (err) {
+        logDetail('ERROR', 'Connection restart failed', { error: err });
     }
 }
 
@@ -362,33 +326,28 @@ async function restartIce() {
 mqtt_client.on('message', async (topic, message) => {
     try {
         const msg = JSON.parse(message.toString());
-        logDetail('MQTT', 'Received message', { type: msg.type, from: msg.from, topic });
+        logDetail('MQTT', 'Received message', { type: msg.type, from: msg.from });
 
         switch(msg.type) {
-            case 'call_request':
-                logDetail('CALL', 'Incoming call', { destinationId: msg.from });
-                // Tampilkan notifikasi panggilan masuk
-                currentCall.destinationId = msg.from;
-                document.getElementById('callerId').textContent = msg.from;
-                document.getElementById('callNotification').classList.remove('hidden');
-                break;
-
-            case 'call_accepted':
-                if (currentCall.isInitiator) {
-                    logDetail('CALL', 'Call accepted, starting WebRTC');
-                    // Mulai WebRTC connection
-                    await createPeerConnection();
-                    await handleSignaling(msg.from);
+            case 'candidate':
+                if (peerConnection && msg.candidate) {
+                    try {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
+                        logDetail('ICE', 'Added ICE candidate');
+                    } catch (err) {
+                        logDetail('ERROR', 'Failed to add ICE candidate', { error: err });
+                    }
                 }
                 break;
 
             case 'offer':
                 try {
-                    logDetail('WEBRTC', 'Received offer');
                     if (!peerConnection) {
-                        await createPeerConnection();
+                        createPeerConnection();
                     }
+                    
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+                    
                     const answer = await peerConnection.createAnswer();
                     await peerConnection.setLocalDescription(answer);
                     
@@ -397,8 +356,21 @@ mqtt_client.on('message', async (topic, message) => {
                         sdp: answer,
                         from: myId
                     }));
+                    
+                    logDetail('WEBRTC', 'Answer sent');
                 } catch (err) {
                     logDetail('ERROR', 'Failed to handle offer', { error: err });
+                }
+                break;
+
+            case 'answer':
+                if (peerConnection) {
+                    try {
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+                        logDetail('WEBRTC', 'Remote description set');
+                    } catch (err) {
+                        logDetail('ERROR', 'Failed to set remote description', { error: err });
+                    }
                 }
                 break;
         }
