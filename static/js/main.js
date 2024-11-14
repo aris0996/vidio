@@ -181,10 +181,11 @@ async function acceptCall() {
     });
     
     document.getElementById('callNotification').classList.add('hidden');
+    document.getElementById('setup').classList.add('hidden');
+    document.getElementById('caller').classList.add('hidden');
     document.getElementById('videos').classList.remove('hidden');
 
     try {
-        // Request media dengan constraints yang lebih spesifik
         localStream = await navigator.mediaDevices.getUserMedia({
             video: {
                 width: { ideal: 1280 },
@@ -197,64 +198,43 @@ async function acceptCall() {
             }
         });
 
-        logDetail('MEDIA', 'Local media stream created', {
-            tracks: localStream.getTracks().map(t => t.kind)
-        });
+        document.getElementById('localVideo').srcObject = localStream;
 
-        // Set local video
-        const localVideo = document.getElementById('localVideo');
-        localVideo.srcObject = localStream;
-        localVideo.play().catch(err => logDetail('ERROR', 'Local video play failed', { error: err }));
-
-        // Create and setup peer connection
+        // Buat peer connection sebelum mengirim acceptance
         createPeerConnection();
 
-        // Send acceptance signal
-        if (!currentCall.isInitiator) {
-            mqtt_client.publish(`vchat/${currentCall.destinationId}`, JSON.stringify({
-                type: 'call_accepted',
-                from: myId
-            }));
-            logDetail('SIGNALING', 'Call acceptance sent');
-        }
+        // Kirim acceptance
+        mqtt_client.publish(`vchat/${currentCall.destinationId}`, JSON.stringify({
+            type: 'call_accepted',
+            from: myId
+        }));
+
     } catch (err) {
         logDetail('ERROR', 'Media access failed', { error: err });
-        alert('Gagal mengakses kamera/mikrofon: ' + err.message);
-        endCall();
+        handleMediaError(err);
     }
 }
 
 function createPeerConnection() {
-    logDetail('WEBRTC', 'Creating peer connection', {
-        iceServers: iceServers
-    });
+    logDetail('WEBRTC', 'Creating peer connection');
     
     peerConnection = new RTCPeerConnection({ iceServers });
 
-    // Handle incoming streams
-    peerConnection.ontrack = event => {
-        logDetail('MEDIA', 'Received remote track', {
-            kind: event.track.kind,
-            id: event.track.id
+    // Tambahkan semua track dari localStream ke peerConnection
+    if (localStream) {
+        localStream.getTracks().forEach(track => {
+            peerConnection.addTrack(track, localStream);
         });
-        
+    }
+
+    peerConnection.ontrack = event => {
+        logDetail('MEDIA', 'Received remote track');
         const remoteVideo = document.getElementById('remoteVideo');
         if (remoteVideo.srcObject !== event.streams[0]) {
             remoteVideo.srcObject = event.streams[0];
             logDetail('MEDIA', 'Remote video stream connected');
         }
     };
-
-    // Add local tracks to peer connection
-    if (localStream) {
-        localStream.getTracks().forEach(track => {
-            logDetail('MEDIA', 'Adding local track to peer connection', {
-                kind: track.kind,
-                id: track.id
-            });
-            peerConnection.addTrack(track, localStream);
-        });
-    }
 
     // ICE candidate handling
     peerConnection.onicecandidate = event => {

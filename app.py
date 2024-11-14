@@ -29,7 +29,7 @@ fallback_ice_servers = {
 @app.route('/')
 def index():
     try:
-        url = 'https://global.xirsys.net/_turn'
+        url = 'https://global.xirsys.net/_turn/vchat'
         response = requests.post(url, data=json.dumps(xirsys_data), timeout=5)
         ice_servers = response.json().get('v', {}).get('iceServers')
         if not ice_servers:
